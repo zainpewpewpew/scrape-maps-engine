@@ -46,11 +46,20 @@ jobs:
             *)           echo "::warning::PAT prefix unexpected. Pastikan paste PAT benar (tanpa spasi/newline, tanpa tanda kutip)." ;;
           esac
           echo "PAT_TRIMMED=$PAT_TRIMMED" >> "$GITHUB_ENV"
-          # Normalize DATA_REPO_URL: strip http(s):// kalau ada, strip trailing slash
-          CLEAN="${DATA_REPO_URL#https://}"
-          CLEAN="${CLEAN#http://}"
+          # Normalize DATA_REPO_URL:
+          # - strip whitespace/newline
+          # - strip common prefix typo spt "Private :" atau "Public :"
+          # - strip http(s):// kalau ada
+          # - strip "git@github.com:" kalau user paste SSH URL
+          # - strip trailing slash
+          CLEAN=$(printf '%s' "$DATA_REPO_URL" | tr -d '[:space:]' | tr -d '\r')
+          # Buang prefix sampai https:// / http:// / git@ kalau ada karakter sebelumnya (spt "Private:https://...")
+          case "$CLEAN" in
+            *https://*) CLEAN="${CLEAN#*https://}" ;;
+            *http://*)  CLEAN="${CLEAN#*http://}" ;;
+            *git@*)     CLEAN="${CLEAN#*git@}"; CLEAN="${CLEAN/://}" ;;
+          esac
           CLEAN="${CLEAN%/}"
-          CLEAN=$(printf '%s' "$CLEAN" | tr -d '[:space:]')
           echo "All secrets present."
           echo "DATA_REPO_URL (normalized): $CLEAN"
           # Pastikan .git di belakang
