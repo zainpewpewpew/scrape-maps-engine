@@ -1,0 +1,38 @@
+# === SECURITY (WAJIB, jangan pernah di-commit) ===
+Maps_Location.txt
+Maps_Location_backup.txt
+apikeymaps.txt
+apikeymaps*.txt
+githubpattoken.txt
+*token*.txt
+webhookdiscord.txt
+urlgithub.txt
+*.env
+.env.*
+
+# === Data directory (clone dari repo data private saat workflow run) ===
+data/
+ScrapeMapsData/
+
+# === Hasil scraping lokal lama ===
+run_*/
+results/
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# === IDE / OS ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# === Keyword mentah (3492 baris, tidak dipakai di prod — yang dipakai ada di repo data) ===
+keywordsmaps.txt

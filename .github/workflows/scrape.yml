@@ -1,0 +1,117 @@
+name: Scrape Maps
+
+on:
+  schedule:
+    - cron: '0 */5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: scrape-maps
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout engine repo
+        uses: actions/checkout@v4
+
+      - name: Clone data repo (private)
+        env:
+          PAT: ${{ secrets.DATA_REPO_PAT }}
+          DATA_REPO_URL: ${{ secrets.DATA_REPO_URL }}
+        run: |
+          git clone "https://x-access-token:${PAT}@${DATA_REPO_URL}" data
+          cd data
+          git config user.email "actions@github.com"
+          git config user.name "Maps Scraper Bot"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Determine current city
+        id: pick
+        run: |
+          CITY=$(python get_current_city.py --data-dir ./data)
+          echo "city=${CITY}" >> "$GITHUB_OUTPUT"
+          echo "Kota aktif: ${CITY}"
+
+      - name: Stop if ALL_DONE
+        if: steps.pick.outputs.city == 'ALL_DONE'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          echo "Semua kota sudah selesai. Mengirim notifikasi akhir."
+          python discord_notify.py --mode all_done --data-dir ./data || true
+          exit 0
+
+      - name: Run scraper
+        id: scrape
+        if: steps.pick.outputs.city != 'ALL_DONE'
+        continue-on-error: true
+        env:
+          MAPS_API_KEYS: ${{ secrets.MAPS_API_KEYS }}
+        run: |
+          python maps_domain_finder.py \
+            --city "${{ steps.pick.outputs.city }}" \
+            --data-dir ./data \
+            --max-runtime-sec 17400
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Read scraper exit code
+        id: result
+        if: steps.pick.outputs.city != 'ALL_DONE'
+        run: |
+          # continue-on-error: true → step.outcome = 'success' selalu kalau non-zero.
+          # Kita pakai progress.json untuk tentukan status.
+          CITY="${{ steps.pick.outputs.city }}"
+          PROGRESS="./data/results/${CITY}/progress.json"
+          KEYWORDS_FILE="./data/keywordsmaps_core.txt"
+          TOTAL_KW=$(grep -cE '^[a-z]' "$KEYWORDS_FILE" || echo 0)
+          DONE_KW=0
+          if [ -f "$PROGRESS" ]; then
+            DONE_KW=$(python -c "import json; print(json.load(open('$PROGRESS')).get('keywords_done', 0))")
+          fi
+          if [ "$DONE_KW" -ge "$TOTAL_KW" ] && [ "$TOTAL_KW" -gt 0 ]; then
+            echo "status=complete" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=partial" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Keyword: $DONE_KW / $TOTAL_KW"
+
+      - name: Update state & notify (city complete)
+        if: steps.pick.outputs.city != 'ALL_DONE' && steps.result.outputs.status == 'complete'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python update_state.py --data-dir ./data --city "${{ steps.pick.outputs.city }}"
+          python discord_notify.py --mode city_done --data-dir ./data --city "${{ steps.pick.outputs.city }}" || true
+
+      - name: Notify partial
+        if: steps.pick.outputs.city != 'ALL_DONE' && steps.result.outputs.status == 'partial'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python discord_notify.py --mode partial --data-dir ./data --city "${{ steps.pick.outputs.city }}" || true
+
+      - name: Commit & push data repo
+        if: steps.pick.outputs.city != 'ALL_DONE'
+        run: |
+          cd data
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Tidak ada perubahan untuk di-commit."
+          else
+            STATUS="${{ steps.result.outputs.status }}"
+            CITY="${{ steps.pick.outputs.city }}"
+            git commit -m "scrape: ${CITY} (${STATUS})"
+            git push
+          fi
