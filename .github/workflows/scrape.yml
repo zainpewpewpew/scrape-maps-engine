@@ -18,15 +18,46 @@ jobs:
       - name: Checkout engine repo
         uses: actions/checkout@v4
 
-      - name: Clone data repo (private)
+      - name: Verify secrets present
         env:
           PAT: ${{ secrets.DATA_REPO_PAT }}
           DATA_REPO_URL: ${{ secrets.DATA_REPO_URL }}
+          MAPS_API_KEYS: ${{ secrets.MAPS_API_KEYS }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
-          git clone "https://x-access-token:${PAT}@${DATA_REPO_URL}" data
+          MISSING=""
+          [ -z "$PAT" ] && MISSING="$MISSING DATA_REPO_PAT"
+          [ -z "$DATA_REPO_URL" ] && MISSING="$MISSING DATA_REPO_URL"
+          [ -z "$MAPS_API_KEYS" ] && MISSING="$MISSING MAPS_API_KEYS"
+          [ -z "$DISCORD_WEBHOOK_URL" ] && MISSING="$MISSING DISCORD_WEBHOOK_URL"
+          if [ -n "$MISSING" ]; then
+            echo "::error::Missing secrets:$MISSING"
+            exit 1
+          fi
+          # Normalize DATA_REPO_URL: strip http(s):// kalau ada, strip trailing slash
+          CLEAN="${DATA_REPO_URL#https://}"
+          CLEAN="${CLEAN#http://}"
+          CLEAN="${CLEAN%/}"
+          echo "All secrets present."
+          echo "DATA_REPO_URL (normalized): $CLEAN"
+          # Pastikan .git di belakang
+          case "$CLEAN" in
+            *.git) ;;
+            *) CLEAN="$CLEAN.git" ;;
+          esac
+          echo "DATA_REPO_URL_CLEAN=$CLEAN" >> "$GITHUB_ENV"
+
+      - name: Clone data repo (private)
+        env:
+          PAT: ${{ secrets.DATA_REPO_PAT }}
+        run: |
+          echo "Cloning: https://x-access-token:****@${DATA_REPO_URL_CLEAN}"
+          git clone "https://x-access-token:${PAT}@${DATA_REPO_URL_CLEAN}" data
           cd data
           git config user.email "actions@github.com"
           git config user.name "Maps Scraper Bot"
+          echo "Data repo cloned. Contents:"
+          ls -la
 
       - name: Setup Python
         uses: actions/setup-python@v5
