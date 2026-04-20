@@ -9,6 +9,10 @@ concurrency:
   group: scrape-maps
   cancel-in-progress: false
 
+env:
+  # URL repo data di-hardcode (bukan rahasia — keamanan ada di PAT).
+  DATA_REPO_URL_CLEAN: github.com/zainpewpewpew/scrape-maps-data.git
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
@@ -21,20 +25,17 @@ jobs:
       - name: Verify secrets present
         env:
           PAT: ${{ secrets.DATA_REPO_PAT }}
-          DATA_REPO_URL: ${{ secrets.DATA_REPO_URL }}
           MAPS_API_KEYS: ${{ secrets.MAPS_API_KEYS }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: |
           MISSING=""
           [ -z "$PAT" ] && MISSING="$MISSING DATA_REPO_PAT"
-          [ -z "$DATA_REPO_URL" ] && MISSING="$MISSING DATA_REPO_URL"
           [ -z "$MAPS_API_KEYS" ] && MISSING="$MISSING MAPS_API_KEYS"
           [ -z "$DISCORD_WEBHOOK_URL" ] && MISSING="$MISSING DISCORD_WEBHOOK_URL"
           if [ -n "$MISSING" ]; then
             echo "::error::Missing secrets:$MISSING"
             exit 1
           fi
-          # Trim whitespace/newline dari PAT (kalau user paste dengan newline trailing)
           PAT_TRIMMED=$(printf '%s' "$PAT" | tr -d '[:space:]')
           PAT_LEN=${#PAT_TRIMMED}
           PAT_PREFIX=$(printf '%s' "$PAT_TRIMMED" | cut -c1-11)
@@ -43,51 +44,31 @@ jobs:
           case "$PAT_PREFIX" in
             github_pat_) echo "PAT format: fine-grained (github_pat_)" ;;
             ghp_*)       echo "PAT format: classic (ghp_)" ;;
-            *)           echo "::warning::PAT prefix unexpected. Pastikan paste PAT benar (tanpa spasi/newline, tanpa tanda kutip)." ;;
+            *)           echo "::warning::PAT prefix unexpected. Pastikan paste PAT benar." ;;
           esac
           echo "PAT_TRIMMED=$PAT_TRIMMED" >> "$GITHUB_ENV"
-          # Normalize DATA_REPO_URL:
-          # - strip whitespace/newline
-          # - strip common prefix typo spt "Private :" atau "Public :"
-          # - strip http(s):// kalau ada
-          # - strip "git@github.com:" kalau user paste SSH URL
-          # - strip trailing slash
-          CLEAN=$(printf '%s' "$DATA_REPO_URL" | tr -d '[:space:]' | tr -d '\r')
-          # Buang prefix sampai https:// / http:// / git@ kalau ada karakter sebelumnya (spt "Private:https://...")
-          case "$CLEAN" in
-            *https://*) CLEAN="${CLEAN#*https://}" ;;
-            *http://*)  CLEAN="${CLEAN#*http://}" ;;
-            *git@*)     CLEAN="${CLEAN#*git@}"; CLEAN="${CLEAN/://}" ;;
-          esac
-          CLEAN="${CLEAN%/}"
-          echo "All secrets present."
-          echo "DATA_REPO_URL (normalized): $CLEAN"
-          # Pastikan .git di belakang
-          case "$CLEAN" in
-            *.git) ;;
-            *) CLEAN="$CLEAN.git" ;;
-          esac
-          echo "DATA_REPO_URL_CLEAN=$CLEAN" >> "$GITHUB_ENV"
+          echo "Data repo URL: ${DATA_REPO_URL_CLEAN}"
 
       - name: Test PAT access
         run: |
-          echo "Testing PAT via ls-remote (no clone)..."
+          echo "Testing PAT via ls-remote..."
           set +e
           git ls-remote "https://x-access-token:${PAT_TRIMMED}@${DATA_REPO_URL_CLEAN}" HEAD
           RC=$?
           set -e
           if [ "$RC" -ne 0 ]; then
-            echo "::error::PAT ditolak. Kemungkinan:"
-            echo "  1. PAT salah paste (ada spasi/newline/quotes) di Secret DATA_REPO_PAT"
-            echo "  2. PAT tidak punya akses ke repo (untuk fine-grained: Repository access harus include scrape-maps-data, Permissions Contents=Read&Write)"
-            echo "  3. DATA_REPO_URL salah. Current: ${DATA_REPO_URL_CLEAN}"
+            echo "::error::PAT ditolak untuk repo ${DATA_REPO_URL_CLEAN}."
+            echo "Solusi: regenerate fine-grained PAT di https://github.com/settings/tokens?type=beta"
+            echo "  - Repository access: Only select repositories > scrape-maps-data"
+            echo "  - Permissions: Contents = Read and write"
+            echo "Lalu update Secret DATA_REPO_PAT di engine repo settings."
             exit 1
           fi
-          echo "PAT OK."
+          echo "PAT OK - akses ke data repo berhasil."
 
       - name: Clone data repo (private)
         run: |
-          echo "Cloning: https://x-access-token:****@${DATA_REPO_URL_CLEAN}"
+          echo "Cloning https://x-access-token:****@${DATA_REPO_URL_CLEAN}"
           git clone "https://x-access-token:${PAT_TRIMMED}@${DATA_REPO_URL_CLEAN}" data
           cd data
           git config user.email "actions@github.com"
@@ -137,8 +118,6 @@ jobs:
         id: result
         if: steps.pick.outputs.city != 'ALL_DONE'
         run: |
-          # continue-on-error: true → step.outcome = 'success' selalu kalau non-zero.
-          # Kita pakai progress.json untuk tentukan status.
           CITY="${{ steps.pick.outputs.city }}"
           PROGRESS="./data/results/${CITY}/progress.json"
           KEYWORDS_FILE="./data/keywordsmaps_core.txt"
