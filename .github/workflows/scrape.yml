@@ -34,10 +34,23 @@ jobs:
             echo "::error::Missing secrets:$MISSING"
             exit 1
           fi
+          # Trim whitespace/newline dari PAT (kalau user paste dengan newline trailing)
+          PAT_TRIMMED=$(printf '%s' "$PAT" | tr -d '[:space:]')
+          PAT_LEN=${#PAT_TRIMMED}
+          PAT_PREFIX=$(printf '%s' "$PAT_TRIMMED" | cut -c1-11)
+          echo "PAT length (trimmed): $PAT_LEN"
+          echo "PAT prefix: ${PAT_PREFIX}..."
+          case "$PAT_PREFIX" in
+            github_pat_) echo "PAT format: fine-grained (github_pat_)" ;;
+            ghp_*)       echo "PAT format: classic (ghp_)" ;;
+            *)           echo "::warning::PAT prefix unexpected. Pastikan paste PAT benar (tanpa spasi/newline, tanpa tanda kutip)." ;;
+          esac
+          echo "PAT_TRIMMED=$PAT_TRIMMED" >> "$GITHUB_ENV"
           # Normalize DATA_REPO_URL: strip http(s):// kalau ada, strip trailing slash
           CLEAN="${DATA_REPO_URL#https://}"
           CLEAN="${CLEAN#http://}"
           CLEAN="${CLEAN%/}"
+          CLEAN=$(printf '%s' "$CLEAN" | tr -d '[:space:]')
           echo "All secrets present."
           echo "DATA_REPO_URL (normalized): $CLEAN"
           # Pastikan .git di belakang
@@ -47,12 +60,26 @@ jobs:
           esac
           echo "DATA_REPO_URL_CLEAN=$CLEAN" >> "$GITHUB_ENV"
 
+      - name: Test PAT access
+        run: |
+          echo "Testing PAT via ls-remote (no clone)..."
+          set +e
+          git ls-remote "https://x-access-token:${PAT_TRIMMED}@${DATA_REPO_URL_CLEAN}" HEAD
+          RC=$?
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::PAT ditolak. Kemungkinan:"
+            echo "  1. PAT salah paste (ada spasi/newline/quotes) di Secret DATA_REPO_PAT"
+            echo "  2. PAT tidak punya akses ke repo (untuk fine-grained: Repository access harus include scrape-maps-data, Permissions Contents=Read&Write)"
+            echo "  3. DATA_REPO_URL salah. Current: ${DATA_REPO_URL_CLEAN}"
+            exit 1
+          fi
+          echo "PAT OK."
+
       - name: Clone data repo (private)
-        env:
-          PAT: ${{ secrets.DATA_REPO_PAT }}
         run: |
           echo "Cloning: https://x-access-token:****@${DATA_REPO_URL_CLEAN}"
-          git clone "https://x-access-token:${PAT}@${DATA_REPO_URL_CLEAN}" data
+          git clone "https://x-access-token:${PAT_TRIMMED}@${DATA_REPO_URL_CLEAN}" data
           cd data
           git config user.email "actions@github.com"
           git config user.name "Maps Scraper Bot"
