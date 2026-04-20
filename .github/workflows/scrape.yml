@@ -39,13 +39,19 @@ jobs:
           PAT_TRIMMED=$(printf '%s' "$PAT" | tr -d '[:space:]')
           PAT_LEN=${#PAT_TRIMMED}
           PAT_PREFIX=$(printf '%s' "$PAT_TRIMMED" | cut -c1-11)
+          PAT_SHA=$(printf '%s' "$PAT_TRIMMED" | sha256sum | cut -c1-16)
           echo "PAT length (trimmed): $PAT_LEN"
           echo "PAT prefix: ${PAT_PREFIX}..."
+          echo "PAT sha256 (first 16): ${PAT_SHA}"
+          echo "Expected length: 93, expected prefix: github_pat_, expected sha256: 450fa65f9aa1ab4c"
           case "$PAT_PREFIX" in
-            github_pat_) echo "PAT format: fine-grained (github_pat_)" ;;
-            ghp_*)       echo "PAT format: classic (ghp_)" ;;
-            *)           echo "::warning::PAT prefix unexpected. Pastikan paste PAT benar." ;;
+            github_pat_) echo "PAT format: fine-grained (OK)" ;;
+            ghp_*)       echo "PAT format: classic (ghp_) - regenerate fine-grained!" ;;
+            *)           echo "::warning::PAT prefix unexpected. Mungkin paste value salah." ;;
           esac
+          if [ "$PAT_LEN" != "93" ]; then
+            echo "::warning::PAT length $PAT_LEN != 93. Secret mungkin corrupt/ada karakter tambahan."
+          fi
           echo "PAT_TRIMMED=$PAT_TRIMMED" >> "$GITHUB_ENV"
           echo "Data repo URL: ${DATA_REPO_URL_CLEAN}"
 
